@@ -1,10 +1,10 @@
 name: Caption Mingguan Otani
 
-# Jalan otomatis tiap Minggu 17:00 WIB (10:00 UTC).
-# Cron GitHub Actions memakai UTC. 10:00 UTC = 17:00 WIB.
+# Jalan otomatis tiap SABTU 17:00 WIB (10:00 UTC).
+# Cron GitHub Actions memakai UTC. 10:00 UTC = 17:00 WIB. Hari: 6 = Sabtu.
 on:
   schedule:
-    - cron: "0 10 * * 0"
+    - cron: "0 10 * * 6"
   # Tombol "Run workflow" manual di tab Actions (buat tes kapan saja)
   workflow_dispatch:
     inputs:
