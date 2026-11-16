@@ -1,15 +1,17 @@
 #!/usr/bin/env python3
 """
-AI Agent: Caption Generator + Fonnte Sender
+AI Agent: Caption Generator (Google Gemini - GRATIS) + Fonnte Sender
 Toko Maju Terus Maju - Kertas Thermal Otani
 
 Alur tiap kali jalan:
-1. Generate 7 caption marketplace baru (via Claude API) untuk minggu depan
+1. Generate 7 caption marketplace baru (via Gemini API gratis) untuk minggu depan
 2. Hitung tanggal + sisipkan Promo Toko / Flash Sale tanggal kembar
 3. Kirim tiap caption ke Fonnte (blast ke daftar nomor / grup WA)
 
 Dijalankan otomatis oleh GitHub Actions (lihat .github/workflows/mingguan.yml).
 Semua rahasia (API key) diambil dari environment variable — JANGAN hardcode di sini.
+
+API key Gemini gratis: https://aistudio.google.com  ->  Get API Key
 """
 
 import os
@@ -24,23 +26,20 @@ import urllib.parse
 # ----------------------------------------------------------------------
 # KONFIGURASI (diisi lewat environment variable / GitHub Secrets)
 # ----------------------------------------------------------------------
-ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
-FONNTE_TOKEN      = os.environ.get("FONNTE_TOKEN", "")
+GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
+FONNTE_TOKEN   = os.environ.get("FONNTE_TOKEN", "")
 
-# Tujuan kirim WA. Bisa:
-#  - daftar nomor dipisah koma: "6281234567890,6289876543210"
-#  - atau ID grup WA Fonnte
-# Diisi lewat Secret FONNTE_TARGET.
+# Tujuan kirim WA: daftar nomor dipisah koma ("62...,62...") atau ID grup Fonnte.
 FONNTE_TARGET = os.environ.get("FONNTE_TARGET", "")
 
-# Kalau DRY_RUN=1, caption HANYA dibuat & dicetak, TIDAK dikirim ke WA.
-# Berguna untuk tes pertama kali tanpa spam pelanggan.
+# DRY_RUN=1 -> caption HANYA dibuat & dicetak, TIDAK dikirim ke WA (buat tes aman).
 DRY_RUN = os.environ.get("DRY_RUN", "0") == "1"
 
-# Jeda antar pengiriman (detik) biar tidak dianggap spam
-SEND_DELAY = int(os.environ.get("SEND_DELAY", "3"))
+# Jeda antar pengiriman (detik) biar tidak dianggap spam.
+SEND_DELAY = int(os.environ.get("SEND_DELAY", "5"))
 
-MODEL = os.environ.get("CLAUDE_MODEL", "claude-opus-4-8")
+# Model Gemini gratis. flash = cepat & kuota besar.
+GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-2.0-flash")
 
 # ----------------------------------------------------------------------
 # DATA PRODUK (ubah di sini kalau ada ukuran / kontak baru)
@@ -66,26 +65,20 @@ BULAN_ID = ["", "Januari", "Februari", "Maret", "April", "Mei", "Juni",
 # 1. HITUNG TANGGAL MINGGU DEPAN (Senin-Minggu)
 # ----------------------------------------------------------------------
 def tanggal_minggu_depan():
-    """Kembalikan list 7 date object: Senin s/d Minggu minggu depan."""
     today = datetime.date.today()
-    # weekday(): Senin=0 ... Minggu=6
-    # Senin minggu depan = Senin terdekat setelah hari ini
-    days_ahead = 7 - today.weekday()  # kalau hari ini Minggu(6) -> besok Senin
+    days_ahead = 7 - today.weekday()  # Senin minggu depan
     senin_depan = today + datetime.timedelta(days=days_ahead)
     return [senin_depan + datetime.timedelta(days=i) for i in range(7)]
 
 
 def is_tanggal_kembar(d):
-    """True kalau tanggal == bulan (1.1, 2.2, ... 12.12)."""
     return d.day == d.month
 
 
 def info_flashsale(dates):
-    """Cari tanggal kembar di minggu ini; kalau tidak ada, cari yang terdekat berikutnya."""
     kembar = [d for d in dates if is_tanggal_kembar(d)]
     if kembar:
         return {"ada_minggu_ini": True, "tanggal": kembar}
-    # cari tanggal kembar terdekat ke depan (dalam 60 hari)
     base = dates[-1]
     for i in range(1, 60):
         d = base + datetime.timedelta(days=i)
@@ -95,7 +88,7 @@ def info_flashsale(dates):
 
 
 # ----------------------------------------------------------------------
-# 2. GENERATE CAPTION via CLAUDE API
+# 2. GENERATE CAPTION via GEMINI API
 # ----------------------------------------------------------------------
 def build_prompt(dates, fs):
     tgl_list = "\n".join(
@@ -132,27 +125,26 @@ OUTPUT: kembalikan HANYA JSON array berisi 7 string (satu caption per elemen), t
 
 def generate_captions(dates, fs):
     prompt = build_prompt(dates, fs)
+    url = (f"https://generativelanguage.googleapis.com/v1beta/models/"
+           f"{GEMINI_MODEL}:generateContent?key={GEMINI_API_KEY}")
     payload = json.dumps({
-        "model": MODEL,
-        "max_tokens": 8000,
-        "messages": [{"role": "user", "content": prompt}],
+        "contents": [{"parts": [{"text": prompt}]}],
+        "generationConfig": {
+            "temperature": 0.9,
+            "maxOutputTokens": 8000,
+            "responseMimeType": "application/json",
+        },
     }).encode("utf-8")
 
     req = urllib.request.Request(
-        "https://api.anthropic.com/v1/messages",
-        data=payload,
-        headers={
-            "x-api-key": ANTHROPIC_API_KEY,
-            "anthropic-version": "2023-06-01",
-            "content-type": "application/json",
-        },
+        url, data=payload,
+        headers={"content-type": "application/json"},
         method="POST",
     )
     with urllib.request.urlopen(req, timeout=120) as resp:
         data = json.loads(resp.read().decode("utf-8"))
 
-    text = data["content"][0]["text"].strip()
-    # bersihkan kalau dibungkus ```json ... ```
+    text = data["candidates"][0]["content"]["parts"][0]["text"].strip()
     if text.startswith("```"):
         text = text.split("```")[1]
         if text.startswith("json"):
@@ -160,7 +152,8 @@ def generate_captions(dates, fs):
         text = text.strip()
     captions = json.loads(text)
     if not isinstance(captions, list) or len(captions) != 7:
-        raise ValueError(f"Expected 7 captions, got: {type(captions)} len={len(captions) if isinstance(captions, list) else 'NA'}")
+        raise ValueError(f"Expected 7 captions, got {type(captions)} "
+                         f"len={len(captions) if isinstance(captions, list) else 'NA'}")
     return captions
 
 
@@ -168,10 +161,7 @@ def generate_captions(dates, fs):
 # 3. KIRIM ke FONNTE
 # ----------------------------------------------------------------------
 def send_fonnte(message, target):
-    data = urllib.parse.urlencode({
-        "target": target,
-        "message": message,
-    }).encode("utf-8")
+    data = urllib.parse.urlencode({"target": target, "message": message}).encode("utf-8")
     req = urllib.request.Request(
         "https://api.fonnte.com/send",
         data=data,
@@ -186,19 +176,19 @@ def send_fonnte(message, target):
 # MAIN
 # ----------------------------------------------------------------------
 def main():
-    if not ANTHROPIC_API_KEY:
-        sys.exit("ERROR: ANTHROPIC_API_KEY belum diisi (set di GitHub Secrets).")
+    if not GEMINI_API_KEY:
+        sys.exit("ERROR: GEMINI_API_KEY belum diisi (set di GitHub Secrets). "
+                 "Ambil gratis di https://aistudio.google.com")
 
     dates = tanggal_minggu_depan()
     fs = info_flashsale(dates)
 
     print(f"[INFO] Generate caption untuk {dates[0]} s/d {dates[-1]}")
     print(f"[INFO] Flash sale info: {fs}")
-    print(f"[INFO] DRY_RUN = {DRY_RUN}")
+    print(f"[INFO] Model: {GEMINI_MODEL} | DRY_RUN = {DRY_RUN}")
 
     captions = generate_captions(dates, fs)
 
-    # Simpan arsip ke folder output
     os.makedirs("output", exist_ok=True)
     for i, (d, cap) in enumerate(zip(dates, captions), start=1):
         fname = f"output/{i}-{HARI_ID[d.weekday()].lower()}-{d.day:02d}{BULAN_ID[d.month][:3].lower()}.txt"
@@ -213,7 +203,8 @@ def main():
         return
 
     if not FONNTE_TOKEN or not FONNTE_TARGET:
-        sys.exit("ERROR: FONNTE_TOKEN / FONNTE_TARGET belum diisi. Set di GitHub Secrets, atau pakai DRY_RUN=1 untuk tes.")
+        sys.exit("ERROR: FONNTE_TOKEN / FONNTE_TARGET belum diisi. "
+                 "Set di GitHub Secrets, atau pakai DRY_RUN=1 untuk tes.")
 
     print("\n[INFO] Mengirim ke Fonnte...")
     for i, cap in enumerate(captions, 1):
