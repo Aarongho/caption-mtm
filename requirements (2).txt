@@ -1,0 +1,2 @@
+# Tidak ada dependency eksternal — script memakai urllib bawaan Python 3.
+# File ini sengaja dibiarkan kosong agar setup makin ringan & tidak gampang error.

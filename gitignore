@@ -1,0 +1,7 @@
+# Jangan commit arsip caption hasil generate
+output/
+
+# Jangan pernah commit file rahasia
+.env
+*.key
+secrets*
