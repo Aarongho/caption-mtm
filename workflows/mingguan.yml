@@ -27,7 +27,7 @@ jobs:
 
       - name: Generate caption & kirim
         env:
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           FONNTE_TOKEN: ${{ secrets.FONNTE_TOKEN }}
           FONNTE_TARGET: ${{ secrets.FONNTE_TARGET }}
           # Jadwal mingguan selalu kirim beneran (DRY_RUN=0).
