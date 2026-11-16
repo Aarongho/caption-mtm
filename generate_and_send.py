@@ -123,10 +123,27 @@ ATURAN:
 OUTPUT: kembalikan HANYA JSON array berisi 7 string (satu caption per elemen), tanpa penjelasan lain. Contoh: ["caption hari 1", "caption hari 2", ...]."""
 
 
-def generate_captions(dates, fs):
-    prompt = build_prompt(dates, fs)
+def list_available_models():
+    """Ambil daftar model yang support generateContent untuk key ini."""
+    url = (f"https://generativelanguage.googleapis.com/v1beta/models"
+           f"?key={GEMINI_API_KEY}")
+    try:
+        with urllib.request.urlopen(url, timeout=60) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+    except Exception as e:
+        print(f"[WARN] Gagal ambil daftar model: {e}")
+        return []
+    models = []
+    for m in data.get("models", []):
+        if "generateContent" in m.get("supportedGenerationMethods", []):
+            # nama datang sebagai "models/xxx"; ambil bagian setelah "models/"
+            models.append(m["name"].split("/", 1)[-1])
+    return models
+
+
+def _call_gemini(model, prompt):
     url = (f"https://generativelanguage.googleapis.com/v1beta/models/"
-           f"{GEMINI_MODEL}:generateContent?key={GEMINI_API_KEY}")
+           f"{model}:generateContent?key={GEMINI_API_KEY}")
     payload = json.dumps({
         "contents": [{"parts": [{"text": prompt}]}],
         "generationConfig": {
@@ -135,14 +152,48 @@ def generate_captions(dates, fs):
             "responseMimeType": "application/json",
         },
     }).encode("utf-8")
-
     req = urllib.request.Request(
         url, data=payload,
         headers={"content-type": "application/json"},
         method="POST",
     )
     with urllib.request.urlopen(req, timeout=120) as resp:
-        data = json.loads(resp.read().decode("utf-8"))
+        return json.loads(resp.read().decode("utf-8"))
+
+
+def generate_captions(dates, fs):
+    prompt = build_prompt(dates, fs)
+
+    # Daftar model yang dicoba berurutan. Model dari GEMINI_MODEL didahulukan,
+    # lalu beberapa nama umum sebagai cadangan kalau yang pertama 404.
+    candidates = [GEMINI_MODEL, "gemini-flash-latest", "gemini-2.5-flash",
+                  "gemini-2.0-flash", "gemini-1.5-flash"]
+    # buang duplikat sambil jaga urutan
+    seen = set()
+    candidates = [m for m in candidates if not (m in seen or seen.add(m))]
+
+    data = None
+    last_err = None
+    for model in candidates:
+        try:
+            print(f"[INFO] Coba model: {model}")
+            data = _call_gemini(model, prompt)
+            print(f"[OK] Model dipakai: {model}")
+            break
+        except urllib.error.HTTPError as e:
+            body = e.read().decode("utf-8", "ignore")
+            last_err = f"HTTP {e.code} untuk {model}: {body[:300]}"
+            print(f"[WARN] {last_err}")
+            if e.code != 404:
+                # error selain 404 (misal key salah / kuota) — tidak perlu coba model lain
+                break
+
+    if data is None:
+        avail = list_available_models()
+        hint = (f" Model yang tersedia untuk key-mu: {avail}" if avail
+                else " Tidak bisa ambil daftar model (cek GEMINI_API_KEY).")
+        raise RuntimeError(f"Semua model gagal. Error terakhir: {last_err}.{hint} "
+                           f"Set Secret GEMINI_MODEL ke salah satu model di atas.")
 
     text = data["candidates"][0]["content"]["parts"][0]["text"].strip()
     if text.startswith("```"):
