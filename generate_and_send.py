@@ -160,7 +160,7 @@ def _call_gemini(model, prompt):
         "contents": [{"parts": [{"text": prompt}]}],
         "generationConfig": {
             "temperature": 0.9,
-            "maxOutputTokens": 8000,
+            "maxOutputTokens": 30000,
             "responseMimeType": "application/json",
         },
     }).encode("utf-8")
@@ -183,7 +183,6 @@ def generate_captions(dates, fs):
     seen = set()
     candidates = [m for m in candidates if m and not (m in seen or seen.add(m))]
 
-    data = None
     last_err = None
     for model in candidates:
         # Tiap model dicoba hingga 3x kalau kena 503 (model sibuk) atau timeout
@@ -191,8 +190,9 @@ def generate_captions(dates, fs):
             try:
                 print(f"[INFO] Coba model: {model} (percobaan {attempt})")
                 data = _call_gemini(model, prompt)
+                captions = _parse_captions(data)  # bisa lempar error kalau JSON kepotong
                 print(f"[OK] Model dipakai: {model}")
-                break
+                return captions
             except urllib.error.HTTPError as e:
                 # HTTPError harus ditangkap SEBELUM URLError (ia subclass-nya)
                 body = e.read().decode("utf-8", "ignore")
@@ -203,10 +203,8 @@ def generate_captions(dates, fs):
                     print(f"[INFO] Model sibuk, tunggu {wait} detik lalu coba lagi...")
                     time.sleep(wait)
                     continue
-                # 404 atau error lain / sudah 3x: pindah ke model berikutnya
-                break
+                break  # 404/lainnya: pindah model
             except (urllib.error.URLError, TimeoutError) as ue:
-                # timeout / masalah jaringan sementara -> coba lagi
                 last_err = f"Network/timeout untuk {model}: {ue}"
                 print(f"[WARN] {last_err}")
                 if attempt < 3:
@@ -215,16 +213,20 @@ def generate_captions(dates, fs):
                     time.sleep(wait)
                     continue
                 break
-        if data is not None:
-            break
+            except (ValueError, KeyError, IndexError) as pe:
+                # JSON kepotong / format tak sesuai -> coba model lain
+                last_err = f"Respons tak valid dari {model}: {pe}"
+                print(f"[WARN] {last_err}")
+                break
 
-    if data is None:
-        avail = list_available_models()
-        hint = (f" Model yang tersedia untuk key-mu: {avail}" if avail
-                else " Tidak bisa ambil daftar model (cek GEMINI_API_KEY).")
-        raise RuntimeError(f"Semua model gagal. Error terakhir: {last_err}.{hint} "
-                           f"Set Secret GEMINI_MODEL ke salah satu model di atas.")
+    avail = list_available_models()
+    hint = (f" Model yang tersedia untuk key-mu: {avail}" if avail
+            else " Tidak bisa ambil daftar model (cek GEMINI_API_KEY).")
+    raise RuntimeError(f"Semua model gagal. Error terakhir: {last_err}.{hint}")
 
+
+def _parse_captions(data):
+    """Ambil & parse 7 caption dari respons Gemini. Lempar error kalau tak valid."""
     text = data["candidates"][0]["content"]["parts"][0]["text"].strip()
     if text.startswith("```"):
         text = text.split("```")[1]
