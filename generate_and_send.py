@@ -104,12 +104,12 @@ def info_flashsale(dates):
 # ----------------------------------------------------------------------
 def build_prompt(dates, fs):
     tgl_list = "\n".join(
-        f"- {HARI_ID[d.weekday()]}, {d.day} {BULAN_ID[d.month]} {d.year}"
+        f"- {HARI_ID[d.weekday()].upper()}, {d.day} {BULAN_ID[d.month]} {d.year}"
         + (" (TANGGAL KEMBAR / FLASH SALE!)" if is_tanggal_kembar(d) else "")
         for d in dates
     )
     if fs["ada_minggu_ini"]:
-        fs_note = "Ada tanggal kembar minggu ini — buat caption hari itu bertema FLASH SALE besar."
+        fs_note = "Ada tanggal kembar minggu ini, buat caption hari itu bertema FLASH SALE besar."
     else:
         b = fs.get("berikutnya")
         fs_note = (
@@ -120,15 +120,18 @@ def build_prompt(dates, fs):
     return f"""Kamu copywriter marketplace. Buat 7 listing marketplace (gaya Shopee/Tokopedia) untuk kertas thermal merk OTANI, satu untuk tiap hari berikut:
 {tgl_list}
 
-ATURAN:
-- Format tiap caption: BARIS PERTAMA = judul produk penuh keyword (tanpa label "Judul"). Lalu deskripsi menarik dengan hook/angle BERBEDA tiap hari. Lalu 1 baris hashtag.
-- JANGAN tulis kata "Judul" atau "Deskripsi".
+ATURAN PENTING:
+- BARIS PERTAMA tiap caption = judul dengan format: "HARI, TANGGAL BULAN | JUDUL SINGKAT TAPI KEREN" diikuti 1-2 emoji yang relevan. Judulnya HURUF KAPITAL SEMUA (FULL CAPS), singkat, catchy. Contoh gaya: "SABTU, 14 NOVEMBER | HARI PANEN, STOK JANGAN KENDOR! 🌾💰"
+- JANGAN tulis kata "Judul" atau "Deskripsi" di mana pun.
+- DILARANG KERAS memakai tanda em dash atau en dash ("—" atau "–") di seluruh teks. Kalau butuh pemisah, pakai koma, titik, tanda seru, atau " | " saja. Panah "→" pada daftar ukuran tetap boleh.
+- Setelah judul, tulis deskripsi menarik dengan hook/angle BERBEDA tiap hari.
+- Hias tipis-tipis pakai emoji yang pas (jangan berlebihan), gaya promosi UMKM yang hangat dan ramah.
 - Tiap hari tonjolkan segmen ukuran berbeda (EDC, Kasir 80x80, Label Barcode, ATM, Mobile Printer, Grosir, dll).
 - WAJIB sertakan blok ukuran lengkap ini PERSIS di tiap caption:
 {UKURAN}
-- Keunggulan: cetak HITAM PEKAT, tulisan tahan 5-6 bulan, aman head printer tidak berdebu, Exp. 2 Tahun, OTANI Asli, bisa Custom Logo, Harga Pabrik, Gratis Ongkir se-Indonesia, bisa ecer & grosir dus-dusan, bisa COD.
-- Promo: selalu sebut "PROMO TOKO setiap hari — diskon beragam". {fs_note}
-- Akhiri tiap caption dengan:
+- Keunggulan yang bisa dipakai: cetak HITAM PEKAT, tulisan tahan 5-6 bulan, aman head printer tidak berdebu, Exp. 2 Tahun, OTANI Asli, bisa Custom Logo, Harga Pabrik, Gratis Ongkir se-Indonesia, bisa ecer & grosir dus-dusan, bisa COD.
+- Promo: selalu sebut "PROMO TOKO setiap hari, diskon beragam". {fs_note}
+- Akhiri tiap caption dengan baris hashtag yang relevan, lalu:
 {KONTAK}
 {PENUTUP}
 
@@ -237,7 +240,13 @@ def _parse_captions(data):
     if not isinstance(captions, list) or len(captions) != 7:
         raise ValueError(f"Expected 7 captions, got {type(captions)} "
                          f"len={len(captions) if isinstance(captions, list) else 'NA'}")
-    return captions
+    # Jaring pengaman: buang em dash / en dash kalau AI masih memakainya.
+    cleaned = []
+    for c in captions:
+        c = c.replace(" — ", ", ").replace(" – ", ", ")
+        c = c.replace("—", ",").replace("–", ",")
+        cleaned.append(c)
+    return cleaned
 
 
 # ----------------------------------------------------------------------
