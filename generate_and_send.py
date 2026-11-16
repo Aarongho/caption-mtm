@@ -2,6 +2,16 @@
 """
 AI Agent: Caption Generator (Google Gemini - GRATIS) + Fonnte Sender
 Toko Maju Terus Maju - Kertas Thermal Otani
+
+Alur tiap kali jalan:
+1. Generate 7 caption marketplace baru (via Gemini API gratis) untuk minggu depan
+2. Hitung tanggal + sisipkan Promo Toko / Flash Sale tanggal kembar
+3. Kirim tiap caption ke Fonnte (blast ke daftar nomor / grup WA)
+
+Dijalankan otomatis oleh GitHub Actions (lihat .github/workflows/mingguan.yml).
+Semua rahasia (API key) diambil dari environment variable — JANGAN hardcode di sini.
+
+API key Gemini gratis: https://aistudio.google.com  ->  Get API Key
 """
 
 import os
@@ -18,9 +28,17 @@ import urllib.parse
 # ----------------------------------------------------------------------
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
 FONNTE_TOKEN   = os.environ.get("FONNTE_TOKEN", "")
+
+# Tujuan kirim WA: daftar nomor dipisah koma ("62...,62...") atau ID grup Fonnte.
 FONNTE_TARGET = os.environ.get("FONNTE_TARGET", "")
+
+# DRY_RUN=1 -> caption HANYA dibuat & dicetak, TIDAK dikirim ke WA (buat tes aman).
 DRY_RUN = os.environ.get("DRY_RUN", "0") == "1"
+
+# Jeda antar pengiriman (detik) biar tidak dianggap spam.
 SEND_DELAY = int(os.environ.get("SEND_DELAY", "5"))
+
+# Model Gemini gratis. flash = cepat & kuota besar.
 GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-2.0-flash")
 
 # ----------------------------------------------------------------------
@@ -48,7 +66,7 @@ BULAN_ID = ["", "Januari", "Februari", "Maret", "April", "Mei", "Juni",
 # ----------------------------------------------------------------------
 def tanggal_minggu_depan():
     today = datetime.date.today()
-    days_ahead = 7 - today.weekday()
+    days_ahead = 7 - today.weekday()  # Senin minggu depan
     senin_depan = today + datetime.timedelta(days=days_ahead)
     return [senin_depan + datetime.timedelta(days=i) for i in range(7)]
 
@@ -106,6 +124,7 @@ OUTPUT: kembalikan HANYA JSON array berisi 7 string (satu caption per elemen), t
 
 
 def list_available_models():
+    """Ambil daftar model yang support generateContent untuk key ini."""
     url = (f"https://generativelanguage.googleapis.com/v1beta/models"
            f"?key={GEMINI_API_KEY}")
     try:
@@ -117,6 +136,7 @@ def list_available_models():
     models = []
     for m in data.get("models", []):
         if "generateContent" in m.get("supportedGenerationMethods", []):
+            # nama datang sebagai "models/xxx"; ambil bagian setelah "models/"
             models.append(m["name"].split("/", 1)[-1])
     return models
 
@@ -143,8 +163,12 @@ def _call_gemini(model, prompt):
 
 def generate_captions(dates, fs):
     prompt = build_prompt(dates, fs)
-    candidates = [GEMINI_MODEL, "gemini-flash-latest", "gemini-2.5-flash",
-                  "gemini-2.0-flash", "gemini-1.5-flash"]
+
+    # Daftar model yang dicoba berurutan. Model dari GEMINI_MODEL didahulukan,
+    # lalu beberapa nama umum sebagai cadangan kalau yang pertama 404.
+    candidates = [GEMINI_MODEL, "gemini-2.5-flash", "gemini-2.5-flash-lite",
+                  "gemini-flash-latest", "gemini-flash-lite-latest"]
+    # buang duplikat sambil jaga urutan
     seen = set()
     candidates = [m for m in candidates if not (m in seen or seen.add(m))]
 
@@ -161,6 +185,7 @@ def generate_captions(dates, fs):
             last_err = f"HTTP {e.code} untuk {model}: {body[:300]}"
             print(f"[WARN] {last_err}")
             if e.code != 404:
+                # error selain 404 (misal key salah / kuota) — tidak perlu coba model lain
                 break
 
     if data is None:
@@ -211,7 +236,7 @@ def main():
 
     print(f"[INFO] Generate caption untuk {dates[0]} s/d {dates[-1]}")
     print(f"[INFO] Flash sale info: {fs}")
-    print(f"[INFO] Model awal: {GEMINI_MODEL} | DRY_RUN = {DRY_RUN}")
+    print(f"[INFO] Model: {GEMINI_MODEL} | DRY_RUN = {DRY_RUN}")
 
     captions = generate_captions(dates, fs)
 
