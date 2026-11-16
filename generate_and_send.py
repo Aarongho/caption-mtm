@@ -39,7 +39,7 @@ DRY_RUN = os.environ.get("DRY_RUN", "0") == "1"
 SEND_DELAY = int(os.environ.get("SEND_DELAY", "5"))
 
 # Model Gemini gratis. flash = cepat & kuota besar.
-GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-2.0-flash")
+GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-3.8-flash")
 
 # ----------------------------------------------------------------------
 # DATA PRODUK (ubah di sini kalau ada ukuran / kontak baru)
@@ -166,8 +166,9 @@ def generate_captions(dates, fs):
 
     # Daftar model yang dicoba berurutan. Model dari GEMINI_MODEL didahulukan,
     # lalu beberapa nama umum sebagai cadangan kalau yang pertama 404.
-    candidates = [GEMINI_MODEL, "gemini-2.5-flash", "gemini-2.5-flash-lite",
-                  "gemini-flash-latest", "gemini-flash-lite-latest"]
+    candidates = [GEMINI_MODEL, "gemini-3.8-flash", "gemini-3.5-flash",
+                  "gemini-flash-latest", "gemini-3.5-flash-lite",
+                  "gemini-flash-lite-latest"]
     # buang duplikat sambil jaga urutan
     seen = set()
     candidates = [m for m in candidates if not (m in seen or seen.add(m))]
@@ -175,18 +176,26 @@ def generate_captions(dates, fs):
     data = None
     last_err = None
     for model in candidates:
-        try:
-            print(f"[INFO] Coba model: {model}")
-            data = _call_gemini(model, prompt)
-            print(f"[OK] Model dipakai: {model}")
-            break
-        except urllib.error.HTTPError as e:
-            body = e.read().decode("utf-8", "ignore")
-            last_err = f"HTTP {e.code} untuk {model}: {body[:300]}"
-            print(f"[WARN] {last_err}")
-            if e.code != 404:
-                # error selain 404 (misal key salah / kuota) — tidak perlu coba model lain
+        # Tiap model dicoba hingga 3x kalau kena 503 (model sibuk/sementara)
+        for attempt in range(1, 4):
+            try:
+                print(f"[INFO] Coba model: {model} (percobaan {attempt})")
+                data = _call_gemini(model, prompt)
+                print(f"[OK] Model dipakai: {model}")
                 break
+            except urllib.error.HTTPError as e:
+                body = e.read().decode("utf-8", "ignore")
+                last_err = f"HTTP {e.code} untuk {model}: {body[:300]}"
+                print(f"[WARN] {last_err}")
+                if e.code == 503 and attempt < 3:
+                    wait = attempt * 10
+                    print(f"[INFO] Model sibuk, tunggu {wait} detik lalu coba lagi...")
+                    time.sleep(wait)
+                    continue
+                # 404 atau error lain / sudah 3x: hentikan percobaan model ini
+                break
+        if data is not None:
+            break
 
     if data is None:
         avail = list_available_models()
