@@ -38,8 +38,20 @@ DRY_RUN = os.environ.get("DRY_RUN", "0") == "1"
 # Jeda antar pengiriman (detik) biar tidak dianggap spam.
 SEND_DELAY = int(os.environ.get("SEND_DELAY", "5"))
 
-# Model Gemini gratis. flash = cepat & kuota besar.
+# Model Gemini. Default sudah model generasi baru (lama sudah dipensiunkan Google).
 GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-3.8-flash")
+
+# Daftar model yang DICOBA berurutan (hardcode, tidak bergantung Secret).
+# Diambil dari daftar model yang tersedia untuk key ini.
+MODEL_CANDIDATES = [
+    "gemini-3.8-flash",
+    "gemini-3.7-flash",
+    "gemini-3.6-flash",
+    "gemini-3.5-flash",
+    "gemini-flash-latest",
+    "gemini-3.5-flash-lite",
+    "gemini-flash-lite-latest",
+]
 
 # ----------------------------------------------------------------------
 # DATA PRODUK (ubah di sini kalau ada ukuran / kontak baru)
@@ -164,19 +176,17 @@ def _call_gemini(model, prompt):
 def generate_captions(dates, fs):
     prompt = build_prompt(dates, fs)
 
-    # Daftar model yang dicoba berurutan. Model dari GEMINI_MODEL didahulukan,
-    # lalu beberapa nama umum sebagai cadangan kalau yang pertama 404.
-    candidates = [GEMINI_MODEL, "gemini-3.8-flash", "gemini-3.5-flash",
-                  "gemini-flash-latest", "gemini-3.5-flash-lite",
-                  "gemini-flash-lite-latest"]
-    # buang duplikat sambil jaga urutan
+    # Daftar model yang dicoba berurutan. GEMINI_MODEL (dari Secret) didahulukan
+    # kalau diisi, lalu daftar hardcode MODEL_CANDIDATES sebagai cadangan.
+    candidates = [GEMINI_MODEL] + MODEL_CANDIDATES
+    # buang duplikat & yang kosong, sambil jaga urutan
     seen = set()
-    candidates = [m for m in candidates if not (m in seen or seen.add(m))]
+    candidates = [m for m in candidates if m and not (m in seen or seen.add(m))]
 
     data = None
     last_err = None
     for model in candidates:
-        # Tiap model dicoba hingga 3x kalau kena 503 (model sibuk/sementara)
+        # Tiap model dicoba hingga 3x kalau kena 503 (model sibuk) atau timeout
         for attempt in range(1, 4):
             try:
                 print(f"[INFO] Coba model: {model} (percobaan {attempt})")
@@ -184,6 +194,7 @@ def generate_captions(dates, fs):
                 print(f"[OK] Model dipakai: {model}")
                 break
             except urllib.error.HTTPError as e:
+                # HTTPError harus ditangkap SEBELUM URLError (ia subclass-nya)
                 body = e.read().decode("utf-8", "ignore")
                 last_err = f"HTTP {e.code} untuk {model}: {body[:300]}"
                 print(f"[WARN] {last_err}")
@@ -192,7 +203,17 @@ def generate_captions(dates, fs):
                     print(f"[INFO] Model sibuk, tunggu {wait} detik lalu coba lagi...")
                     time.sleep(wait)
                     continue
-                # 404 atau error lain / sudah 3x: hentikan percobaan model ini
+                # 404 atau error lain / sudah 3x: pindah ke model berikutnya
+                break
+            except (urllib.error.URLError, TimeoutError) as ue:
+                # timeout / masalah jaringan sementara -> coba lagi
+                last_err = f"Network/timeout untuk {model}: {ue}"
+                print(f"[WARN] {last_err}")
+                if attempt < 3:
+                    wait = attempt * 10
+                    print(f"[INFO] Tunggu {wait} detik lalu coba lagi...")
+                    time.sleep(wait)
+                    continue
                 break
         if data is not None:
             break
